@@ -129,6 +129,54 @@ static cpuset_t *vcpumap[VM_MAXCPU] = { NULL };
 
 static struct vmctx *_ctx;
 
+#ifdef WITH_AFL
+#define AFL_MAX_ARGS_NUM 256
+static char *afl_argv[AFL_MAX_ARGS_NUM];
+static int afl_argc = 0;
+static int afl_enable = 0;
+static int
+afl_get_args(char *afl_args_file)
+{
+	char *line = NULL;
+	size_t len = 0;
+	FILE *fp;
+
+	fp = fopen(afl_args_file, "r");
+	if (!fp) {
+		perror("failed to open afl args files");
+		return -1;
+	}
+
+	afl_argv[afl_argc++] = "arcn-dm-afl";
+
+	while (getline(&line, &len, fp) != -1) {
+		/* replace '\n' with '0' */
+		line[strlen(line)-1] = 0;
+		afl_argv[afl_argc++] = line;
+
+		printf("afl arg %d: %s\n", afl_argc, line);
+		/* reset line and len, see getline's manual */
+		line = NULL;
+		len = 0;
+	}
+
+	fclose(fp);
+	return 0;
+}
+
+static void
+afl_raise_signal(int sig)
+{
+	int rc;
+
+	printf("afl: raise signal %d\n", sig);
+	rc = raise(sig);
+	if (rc) {
+		perror("afl: raise");
+	}
+}
+#endif
+
 static void
 usage(int code)
 {
@@ -172,6 +220,9 @@ usage(int code)
 		"            its params: threshold/s,probe-period(s),delay_time(ms),delay_duration(ms)\n"
 		"       --virtio_poll: enable virtio poll mode with poll interval with ns\n"
 		"       --vtpm2: Virtual TPM2 args: sock_path=$PATH_OF_SWTPM_SOCKET\n"
+#ifdef WITH_AFL
+		"       --afl: afl parameter file path\n"
+#endif
 		"       --lapic_pt: enable local apic passthrough\n",
 		progname, (int)strnlen(progname, PATH_MAX), "", (int)strnlen(progname, PATH_MAX), "",
 		(int)strnlen(progname, PATH_MAX), "", (int)strnlen(progname, PATH_MAX), "",
@@ -661,6 +712,12 @@ vm_loop(struct vmctx *ctx)
 				handle_vmexit(ctx, vhm_req, vcpu_id);
 		}
 
+#ifdef WITH_AFL
+		if (afl_enable) {
+			afl_raise_signal(SIGINT);
+			break;
+		}
+#endif
 		if (VM_SUSPEND_FULL_RESET == vm_get_suspend_mode() ||
 		    VM_SUSPEND_POWEROFF == vm_get_suspend_mode()) {
 			break;
@@ -708,6 +765,7 @@ enum {
 	CMD_OPT_INTR_MONITOR,
 	CMD_OPT_VTPM2,
 	CMD_OPT_LAPIC_PT,
+	CMD_OPT_AFL,
 };
 
 static struct option long_options[] = {
@@ -747,6 +805,9 @@ static struct option long_options[] = {
 	{"intr_monitor",	required_argument,	0, CMD_OPT_INTR_MONITOR},
 	{"vtpm2",		required_argument,	0, CMD_OPT_VTPM2},
 	{"lapic_pt",		no_argument,		0, CMD_OPT_LAPIC_PT},
+#ifdef WITH_AFL
+	{"afl",		required_argument,	0, CMD_OPT_AFL},
+#endif
 	{0,			0,			0,  0  },
 };
 
@@ -1039,6 +1100,9 @@ int main(int argc, char *argv[])
 	int option_idx = 0;
 	int dm_options = 0, vmcfg = 0;
 	int index = -1;
+#ifdef WITH_AFL
+	char *afl_args_file = NULL;
+#endif
 
 	while ((c = getopt_long(argc, argv, optstr, long_options,
 			&option_idx)) != -1) {
@@ -1051,10 +1115,26 @@ int main(int argc, char *argv[])
 			dm_strtoi(optarg, NULL, 0, &index);
 			vmcfg_dump(index, long_options, optstr);
 			return 0;
+#ifdef WITH_AFL
+		case CMD_OPT_AFL:
+			afl_args_file = optarg;
+			break;
+#endif
 		default:
 			dm_options++;
 		}
 	}
+
+#ifdef WITH_AFL
+	if (afl_args_file) {
+		if (afl_get_args(afl_args_file)) {
+			return -1;
+		}
+		afl_enable = 1;
+		optind = 0;
+		return dm_run(afl_argc, afl_argv);
+	}
+#endif
 
 	if (!vmcfg) {
 		optind = 0;

@@ -7,6 +7,7 @@ BASEDIR := $(shell pwd)
 DM_OBJDIR ?= $(CURDIR)/build
 DM_BUILD_VERSION ?=
 DM_BUILD_TAG ?=
+AFL ?= 0
 
 CC ?= gcc
 
@@ -24,6 +25,11 @@ CFLAGS += -I$(BASEDIR)/include
 CFLAGS += -I$(BASEDIR)/include/public
 CFLAGS += -I$(DM_OBJDIR)/include
 CFLAGS += -I$(TOOLS_OUT)
+
+ifeq (1, $(AFL))
+CC := afl-gcc
+CFLAGS += -DWITH_AFL=1
+endif
 
 ifneq (, $(DM_ASL_COMPILER))
 CFLAGS += -DASL_COMPILER=\"$(DM_ASL_COMPILER)\"
