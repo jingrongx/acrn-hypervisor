@@ -21,7 +21,8 @@
 #define PM1B_EVT_PIO_IDX	(PM1A_CNT_PIO_IDX + 1U)
 #define PM1B_CNT_PIO_IDX	(PM1B_EVT_PIO_IDX + 1U)
 #define RTC_PIO_IDX		(PM1B_CNT_PIO_IDX + 1U)
-#define EMUL_PIO_IDX_MAX	(RTC_PIO_IDX + 1U)
+#define RT_VM_PM1A_CNT_PIO_IDX	(RTC_PIO_IDX + 1U)
+#define EMUL_PIO_IDX_MAX	(RT_VM_PM1A_CNT_PIO_IDX + 1U)
 
 /**
  * @brief The handler of VM exits on I/O instructions
@@ -83,4 +84,17 @@ int32_t register_mmio_emulation_handler(struct acrn_vm *vm,
 	hv_mem_io_handler_t read_write, uint64_t start,
 	uint64_t end, void *handler_private_data);
 
+/**
+ * @brief Register port I/O default handler
+ *
+ * @param vm      The VM to which the port I/O handlers are registered
+ */
+void register_pio_default_emulation_handler(struct acrn_vm *vm);
+
+/**
+ * @brief Register MMIO default handler
+ *
+ * @param vm The VM to which the MMIO handler is registered
+ */
+void register_mmio_default_emulation_handler(struct acrn_vm *vm);
 #endif /* IO_EMUL_H */

@@ -52,6 +52,12 @@
 #define GUEST_FLAG_IO_COMPLETION_POLLING	(1UL << 2U)  	/* Whether need hypervisor poll IO completion */
 #define GUEST_FLAG_CLOS_REQUIRED		(1UL << 3U)     /* Whether CLOS is required */
 #define GUEST_FLAG_HIDE_MTRR			(1UL << 4U)  	/* Whether hide MTRR from VM */
+#define GUEST_FLAG_RT				(1UL << 5U)     /* Whether the vm is RT-VM */
+
+/* TODO: We may need to get this addr from guest ACPI instead of hardcode here */
+#define RT_VM_PM1A_CNT_ADDR	0x404U
+#define RT_VM_PM1A_SLP_TYP	0x1c00U
+#define RT_VM_PM1A_SLP_EN	0x2000U
 
 /**
  * @brief Hypercall
