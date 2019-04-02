@@ -11,25 +11,7 @@
 #include <page.h>
 #include <logmsg.h>
 #include <cat.h>
-#ifndef CONFIG_PARTITION_MODE
-#include <sos_vm.h>
-
-static struct acrn_vm_config vm_configs[CONFIG_MAX_VM_NUM] __aligned(PAGE_SIZE) = {
-	{
-		.type = SOS_VM,
-		.name = SOS_VM_CONFIG_NAME,
-		.guest_flags = SOS_VM_CONFIG_GUEST_FLAGS,
-		.memory = {
-			.start_hpa = 0x0UL,
-			.size = CONFIG_SOS_RAM_SIZE,
-		},
-		.os_config = {
-			.name = SOS_VM_CONFIG_OS_NAME,
-		},
-	},
-};
-#else
-#include <partition_config.h>
+#include <vm_configurations.h>
 
 #define INIT_VM_CONFIG(idx)	\
 	{		\
@@ -37,6 +19,7 @@ static struct acrn_vm_config vm_configs[CONFIG_MAX_VM_NUM] __aligned(PAGE_SIZE) 
 		.name = VM##idx##_CONFIG_NAME,	\
 		.pcpu_bitmap = VM##idx##_CONFIG_PCPU_BITMAP,	\
 		.guest_flags = VM##idx##_CONFIG_FLAGS,	\
+		.clos = VM##idx##_CONFIG_CLOS,	\
 		.memory = {	\
 			.start_hpa = VM##idx##_CONFIG_MEM_START_HPA,	\
 			.size = VM##idx##_CONFIG_MEM_SIZE,	\
@@ -67,10 +50,10 @@ static struct acrn_vm_config vm_configs[CONFIG_MAX_VM_NUM] __aligned(PAGE_SIZE) 
 	INIT_VM_CONFIG(3),
 #endif
 };
-#endif
 
 /*
  * @pre vm_id < CONFIG_MAX_VM_NUM
+ * @post return != NULL 
  */
 struct acrn_vm_config *get_vm_config(uint16_t vm_id)
 {
@@ -100,6 +83,10 @@ int32_t sanitize_vm_config(void)
 		switch (vm_config->type) {
 		case PRE_LAUNCHED_VM:
 			if (vm_config->pcpu_bitmap == 0U) {
+				ret = -EINVAL;
+			/* GUEST_FLAG_RT must be set if we have GUEST_FLAG_LAPIC_PASSTHROUGH set in guest_flags */
+			} else if (((vm_config->guest_flags & GUEST_FLAG_LAPIC_PASSTHROUGH) != 0U)
+					&& ((vm_config->guest_flags & GUEST_FLAG_RT) == 0U)) {
 				ret = -EINVAL;
 			} else {
 				pre_launch_pcpu_bitmap |= vm_config->pcpu_bitmap;

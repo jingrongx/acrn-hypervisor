@@ -238,6 +238,22 @@ static void shell_puts(const char *string_ptr)
 				SHELL_STRING_MAX_LEN));
 }
 
+static uint16_t sanitize_vmid(uint16_t vmid)
+{
+	uint16_t sanitized_vmid = vmid;
+	char temp_str[TEMP_STR_SIZE];
+
+	if (vmid >= CONFIG_MAX_VM_NUM) {
+		snprintf(temp_str, MAX_STR_SIZE,
+			"VM ID given exceeds the MAX_VM_NUM(%u), using 0 instead\r\n",
+			CONFIG_MAX_VM_NUM);
+		shell_puts(temp_str);
+		sanitized_vmid = 0U;
+	}
+
+	return sanitized_vmid;
+}
+
 static void shell_handle_special_char(char ch)
 {
 	switch (ch) {
@@ -588,7 +604,7 @@ static int32_t shell_list_vcpu(__unused int32_t argc, __unused char **argv)
 
 	for (idx = 0U; idx < CONFIG_MAX_VM_NUM; idx++) {
 		vm = get_vm_from_vmid(idx);
-		if (vm == NULL) {
+		if (!is_valid_vm(vm)) {
 			continue;
 		}
 		foreach_vcpu(i, vm, vcpu) {
@@ -734,11 +750,11 @@ static int32_t shell_vcpu_dumpreg(int32_t argc, char **argv)
 	if (status < 0) {
 		goto out;
 	}
-	vm_id = (uint16_t)status;
+	vm_id = sanitize_vmid((uint16_t)status);
 	vcpu_id = (uint16_t)strtol_deci(argv[2]);
 
 	vm = get_vm_from_vmid(vm_id);
-	if (vm == NULL) {
+	if (!is_valid_vm(vm)) {
 		shell_puts("No vm found in the input <vm_id, vcpu_id>\r\n");
 		status = -EINVAL;
 		goto out;
@@ -821,7 +837,7 @@ static int32_t shell_dumpmem(int32_t argc, char **argv)
 static int32_t shell_to_sos_console(__unused int32_t argc, __unused char **argv)
 {
 	char temp_str[TEMP_STR_SIZE];
-	uint16_t guest_no = 0U;
+	uint16_t vm_id = 0U;
 
 	struct acrn_vm *vm;
 	struct acrn_vuart *vu;
@@ -829,21 +845,21 @@ static int32_t shell_to_sos_console(__unused int32_t argc, __unused char **argv)
 	struct acrn_vm_config *vm_config;
 
 	if (argc == 2U) {
-		guest_no = strtol_deci(argv[1]);
+		vm_id = sanitize_vmid(strtol_deci(argv[1]));
 	}
 
-	vuart_vmid = guest_no;
+	vuart_vmid = vm_id;
 #endif
 	/* Get the virtual device node */
-	vm = get_vm_from_vmid(guest_no);
-	if (vm == NULL) {
+	vm = get_vm_from_vmid(vm_id);
+	if (!is_valid_vm(vm)) {
 		return -EINVAL;
 	}
 
 #ifdef CONFIG_PARTITION_MODE
-	vm_config = get_vm_config(guest_no);
-	if (vm_config != NULL && vm_config->vm_vuart == false) {
-		snprintf(temp_str, TEMP_STR_SIZE, "No vUART configured for vm%d\n", guest_no);
+	vm_config = get_vm_config(vm_id);
+	if (!vm_config->vm_vuart) {
+		snprintf(temp_str, TEMP_STR_SIZE, "No vUART configured for vm%d\n", vm_id);
 		shell_puts(temp_str);
 		return 0;
 	}
@@ -855,9 +871,7 @@ static int32_t shell_to_sos_console(__unused int32_t argc, __unused char **argv)
 	 */
 	vu->active = true;
 	/* Output that switching to SOS shell */
-	snprintf(temp_str, TEMP_STR_SIZE,
-			"\r\n----- Entering Guest %d Shell -----\r\n",
-			guest_no);
+	snprintf(temp_str, TEMP_STR_SIZE, "\r\n----- Entering Guest %d Shell -----\r\n", vm_id);
 
 	shell_puts(temp_str);
 
@@ -1058,7 +1072,7 @@ static void get_vioapic_info(char *str_arg, size_t str_max, uint16_t vmid)
 	struct acrn_vm *vm = get_vm_from_vmid(vmid);
 	uint32_t pin, pincount;
 
-	if (vm == NULL) {
+	if (!is_valid_vm(vm)) {
 		len = snprintf(str, size, "\r\nvm is not exist for vmid %hu", vmid);
 		if (len >= size) {
 			goto overflow;
@@ -1115,7 +1129,7 @@ static int32_t shell_show_vioapic_info(int32_t argc, char **argv)
 	}
 	ret = strtol_deci(argv[1]);
 	if (ret >= 0) {
-		vmid = (uint16_t) ret;
+		vmid = sanitize_vmid((uint16_t) ret);
 		get_vioapic_info(shell_log_buf, SHELL_LOG_BUF_SIZE, vmid);
 		shell_puts(shell_log_buf);
 		return 0;

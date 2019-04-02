@@ -85,9 +85,10 @@ struct vm_pm_info {
 #define VM_MONO_GUEST       0x01
 /* Enumerated type for VM states */
 enum vm_state {
-	VM_STATE_UNKNOWN = 0,
+	VM_STATE_INVALID = 0,
 	VM_CREATED,	/* VM created / awaiting start (boot) */
 	VM_STARTED,	/* VM started (booted) */
+	VM_POWERING_OFF,     /* RTVM only, it is trying to poweroff by itself */
 	VM_PAUSED,	/* VM paused */
 };
 
@@ -111,6 +112,8 @@ struct vm_arch {
 	struct acrn_vioapic vioapic;	/* Virtual IOAPIC base address */
 	struct acrn_vpic vpic;      /* Virtual PIC */
 	struct vm_io_handler_desc emul_pio[EMUL_PIO_IDX_MAX];
+	io_read_fn_t default_io_read;
+	io_write_fn_t default_io_write;
 
 	/* reference to virtual platform to come here (as needed) */
 } __aligned(PAGE_SIZE);
@@ -131,6 +134,7 @@ struct acrn_vm {
 
 	uint16_t emul_mmio_regions; /* Number of emulated mmio regions */
 	struct mem_io_node emul_mmio[CONFIG_MAX_EMULATED_MMIO_REGIONS];
+	hv_mem_io_handler_t default_read_write;
 
 	uint8_t GUID[16];
 	struct secure_world_control sworld_control;
@@ -205,6 +209,7 @@ int32_t reset_vm(struct acrn_vm *vm);
 int32_t create_vm(uint16_t vm_id, struct acrn_vm_config *vm_config, struct acrn_vm **rtn_vm);
 void prepare_vm(uint16_t vm_id, struct acrn_vm_config *vm_config);
 void launch_vms(uint16_t pcpu_id);
+bool is_valid_vm(const struct acrn_vm *vm);
 bool is_sos_vm(const struct acrn_vm *vm);
 uint16_t find_free_vm_id(void);
 struct acrn_vm *get_vm_from_vmid(uint16_t vm_id);
@@ -221,6 +226,7 @@ uint16_t get_vm_pcpu_nums(const struct acrn_vm_config *vm_config);
 void vrtc_init(struct acrn_vm *vm);
 
 bool is_lapic_pt(const struct acrn_vm *vm);
+bool is_rt_vm(const struct acrn_vm *vm);
 bool vm_hide_mtrr(const struct acrn_vm *vm);
 
 #endif /* !ASSEMBLER */
