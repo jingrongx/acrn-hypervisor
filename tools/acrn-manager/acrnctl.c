@@ -85,6 +85,11 @@ static int check_name(const char *name)
 	if (!strcmp(name, "nothing"))
 		return -1;
 
+	if (strnlen(name, MAX_VM_OS_NAME_LEN) >= MAX_VM_OS_NAME_LEN) {
+		printf("(%s) size exceed MAX_VM_OS_NAME_LEN:%u\n", name,MAX_VM_OS_NAME_LEN);
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -95,7 +100,7 @@ static int find_acrn_dm;
 static int write_tmp_file(int fd, int n, char *word[])
 {
 	int len, ret, i = 0;
-	char buf[128];
+	char buf[PATH_LEN];
 
 	if (!n)
 		return 0;
@@ -160,7 +165,6 @@ static inline int _get_vmname(const char *src, char *vmname, int max_len_vmname)
 }
 
 #define MAX_FILE_SIZE   (4096 * 5)
-#define FILE_NAME_LENGTH	128
 
 #define TMP_FILE_SUFFIX		".acrnctl"
 
@@ -172,16 +176,16 @@ static int acrnctl_do_add(int argc, char *argv[])
 	char *word[MAX_WORD], *line;
 	char *word_p = NULL, *line_p = NULL;
 	int n_word;
-	char fname[FILE_NAME_LENGTH + sizeof(TMP_FILE_SUFFIX)];
-	char cmd[128];
-	char args[128];
+	char fname[PATH_LEN + sizeof(TMP_FILE_SUFFIX)];
+	char cmd[PATH_LEN];
+	char args[PATH_LEN];
 	int p, i, len_cmd_out = 0, c_flag = 0;
-	char cmd_out[256];
-	char vmname[128];
+	char cmd_out[PATH_LEN * 2];
+	char vmname[PATH_LEN];
 	size_t len = sizeof(cmd_out);
 
-	if (strnlen(argv[1], FILE_NAME_LENGTH) == FILE_NAME_LENGTH) {
-		printf("File name too long (maximum len %d)\n", FILE_NAME_LENGTH);
+	if (strnlen(argv[1], PATH_LEN) == PATH_LEN) {
+		printf("File name too long (maximum len %d)\n", PATH_LEN);
 		return -1;
 	}
 
@@ -414,31 +418,26 @@ static int acrnctl_do_add(int argc, char *argv[])
 static int acrnctl_do_stop(int argc, char *argv[])
 {
 	struct vmmngr_struct *s;
-	int i;
 
-	for (i = 1; i < argc; i++) {
-		s = vmmngr_find(argv[i]);
-		if (!s) {
-			printf("can't find %s\n", argv[i]);
-			continue;
-		}
-		if (s->state == VM_CREATED) {
-			printf("%s is already (%s)\n", argv[i],
-			       state_str[s->state]);
-			continue;
-		}
-		stop_vm(argv[i]);
+	s = vmmngr_find(argv[1]);
+	if (!s) {
+		printf("can't find %s\n", argv[1]);
+		return -1;
 	}
+	if (s->state == VM_CREATED) {
+		printf("%s is already (%s)\n", argv[1],state_str[s->state]);
+		return -1;
+	}
+	return stop_vm(argv[1]);
 
-	return 0;
 }
 
 /* Function: Delete runC configuration */
 static inline int del_runC(char *argv)
 {
-	char cmd[128];
-	char cmd_out[256];
-	char runc_path[128];
+	char cmd[PATH_LEN];
+	char cmd_out[PATH_LEN * 2];
+	char runc_path[PATH_LEN];
 
 	/* The configuration added by launch_uos script */
 	if (snprintf(runc_path, sizeof(runc_path), "%s/runc/%s",
@@ -483,36 +482,30 @@ static inline int del_runC(char *argv)
 static int acrnctl_do_del(int argc, char *argv[])
 {
 	struct vmmngr_struct *s;
-	int i;
-	char cmd[128];
+	char cmd[PATH_LEN];
 
-	for (i = 1; i < argc; i++) {
-		s = vmmngr_find(argv[i]);
-		if (!s) {
-			printf("can't find %s\n", argv[i]);
-			continue;
-		}
-		if (s->state != VM_CREATED) {
-			printf("can't delete %s(%s)\n", argv[i],
-			       state_str[s->state]);
-			continue;
-		}
-		if (snprintf(cmd, sizeof(cmd), "rm -f %s/%s.sh",
-			 ACRN_CONF_PATH_ADD, argv[i]) >= sizeof(cmd)) {
-			printf("WARN: cmd is truncated\n");
-			return -1;
-		}
-		system(cmd);
-		if (snprintf(cmd, sizeof(cmd), "rm -f %s/%s.args",
-			 ACRN_CONF_PATH_ADD, argv[i]) >= sizeof(cmd)) {
-			printf("WARN: cmd is truncated\n");
-			return -1;
-		}
-		system(cmd);
-		if (del_runC(argv[i]) < 0) {
-			printf("ERROR: del runC failed!\n");
-			return -1;
-		}
+	s = vmmngr_find(argv[1]);
+	if (!s) {
+		printf("can't find %s\n", argv[1]);
+		return -1;
+	}
+	if (s->state != VM_CREATED) {
+		printf("can't delete %s(%s)\n", argv[1],state_str[s->state]);
+		return -1;
+	}
+	if (snprintf(cmd, sizeof(cmd), "rm -f %s/%s.sh",ACRN_CONF_PATH_ADD, argv[1]) >= sizeof(cmd)) {
+		printf("WARN: cmd is truncated\n");
+		return -1;
+	}
+	system(cmd);
+	if (snprintf(cmd, sizeof(cmd), "rm -f %s/%s.args",ACRN_CONF_PATH_ADD, argv[1]) >= sizeof(cmd)) {
+		printf("WARN: cmd is truncated\n");
+		return -1;
+	}
+	system(cmd);
+	if (del_runC(argv[1]) < 0) {
+		printf("ERROR: del runC failed!\n");
+		return -1;
 	}
 
 	return 0;
@@ -533,101 +526,92 @@ static int acrnctl_do_start(int argc, char *argv[])
 		return -1;
 	}
 
-	start_vm(argv[1]);
+	return start_vm(argv[1]);
 
-	return 0;
 }
 
 static int acrnctl_do_pause(int argc, char *argv[])
 {
 	struct vmmngr_struct *s;
-	int i;
+	int ret = -1;
 
-	for (i = 1; i < argc; i++) {
-		s = vmmngr_find(argv[i]);
-		if (!s) {
-			printf("Can't find vm %s\n", argv[i]);
-			continue;
-		}
-
-		/* Send pause cmd to arcn-dm only when vm is in VM_STARTED */
-		switch (s->state) {
-			case VM_STARTED:
-				pause_vm(argv[i]);
-				break;
-			default:
-				printf("%s current state %s, can't pause\n",
-					argv[i], state_str[s->state]);
-		}
+	s = vmmngr_find(argv[1]);
+	if (!s) {
+		printf("Can't find vm %s\n", argv[1]);
+		return ret;
 	}
 
-	return 0;
+	/* Send pause cmd to arcn-dm only when vm is in VM_STARTED */
+	switch (s->state) {
+		case VM_STARTED:
+			ret = pause_vm(argv[1]);
+			break;
+		default:
+			printf("%s current state %s, can't pause\n",argv[1], state_str[s->state]);
+	}
+
+	return ret;
 }
 
 static int acrnctl_do_continue(int argc, char *argv[])
 {
 	struct vmmngr_struct *s;
-	int i;
+	int ret = -1;
 
-	for (i = 1; i < argc; i++) {
-		s = vmmngr_find(argv[i]);
-		if (!s) {
-			printf("Can't find vm %s\n", argv[i]);
-			continue;
-		}
-
-		/* Per current implemention, we can't know if vm is in paused
-		   state. Send continue cmd to acrn-dm when VM_STARTED and will
-		   correct it later when we have a way to check if vm has been
-		   paused */
-		switch (s->state) {
-			case VM_STARTED:
-				continue_vm(argv[i]);
-				break;
-			default:
-				printf("%s current state %s, can't continue\n",
-					argv[i], state_str[s->state]);
-		}
+	s = vmmngr_find(argv[1]);
+	if (!s) {
+		printf("Can't find vm %s\n", argv[1]);
+		return ret;
 	}
 
-	return 0;
+	/* Per current implemention, we can't know if vm is in paused
+	   state. Send continue cmd to acrn-dm when VM_STARTED and will
+           correct it later when we have a way to check if vm has been
+	   paused */
+	switch (s->state) {
+		case VM_STARTED:
+			ret = continue_vm(argv[1]);
+			break;
+		default:
+			printf("%s current state %s, can't continue\n",argv[1], state_str[s->state]);
+	}
+
+	return ret;
 }
 
 static int acrnctl_do_suspend(int argc, char *argv[])
 {
 	struct vmmngr_struct *s;
-	int i;
+	int ret = -1;
 
-	for (i = 1; i < argc; i++) {
-		s = vmmngr_find(argv[1]);
-		if (!s) {
-			printf("Can't find vm %s\n", argv[i]);
-			continue;
-		}
-
-		/* Only send suspend cmd to acrn-dm now when VM_STARTED */
-		switch (s->state) {
-			case VM_STARTED:
-				suspend_vm(argv[i]);
-				break;
-			default:
-				printf("%s current state %s, can't suspend\n",
-					argv[i], state_str[s->state]);
-		}
+	s = vmmngr_find(argv[1]);
+	if (!s) {
+		printf("Can't find vm %s\n", argv[1]);
+		return ret;
 	}
 
-	return 0;
+	/* Only send suspend cmd to acrn-dm now when VM_STARTED */
+	switch (s->state) {
+		case VM_STARTED:
+			ret = suspend_vm(argv[1]);
+			break;
+		default:
+			printf("%s current state %s, can't suspend\n",argv[1], state_str[s->state]);
+	}
+
+	return ret;
 }
 
 static int acrnctl_do_resume(int argc, char *argv[])
 {
 	struct vmmngr_struct *s;
 	unsigned reason = CBC_WK_RSN_BTN;
+	int ret = -1;
 
 	s = vmmngr_find(argv[1]);
 	if (!s) {
 		printf("Can't find vm %s\n", argv[1]);
-		return -1;
+		return ret;
 	}
 
 	if (argc == 3) {
@@ -638,15 +622,14 @@ static int acrnctl_do_resume(int argc, char *argv[])
 
 	switch (s->state) {
 		case VM_SUSPENDED:
-			resume_vm(argv[1], reason);
+			ret = resume_vm(argv[1], reason);
 			printf("resume %s reason(0x%x\n", argv[1], reason);
 			break;
 		default:
-			printf("%s current state %s, can't resume\n",
-				argv[1], state_str[s->state]);
+			printf("%s current state %s, can't resume\n",argv[1], state_str[s->state]);
 	}
 
-	return 0;
+	return ret;
 }
 
 static int wait_vm_stop(const char * vmname, unsigned int timeout)
@@ -678,32 +661,31 @@ static int wait_vm_stop(const char * vmname, unsigned int timeout)
 static int acrnctl_do_reset(int argc, char *argv[])
 {
 	struct vmmngr_struct *s;
-	int i;
+	int ret = -1;
 
-	for (i = 1; i < argc; i++) {
-		s = vmmngr_find(argv[i]);
-		if (!s) {
-			printf("Can't find vm %s\n", argv[i]);
-			continue;
-		}
-
-		switch(s->state) {
-			case VM_STARTED:
-			case VM_SUSPENDED:
-				stop_vm(argv[i]);
-				if (wait_vm_stop(argv[i], STOP_TIMEOUT)) {
-					printf("Failed to stop %s in %u sec, reset failed\n",
-						argv[i], STOP_TIMEOUT);
-					return -1;
-				}
-				start_vm(argv[i]);
-				break;
-			default:
-				printf("%s current state: %s, can't reset\n",
-					argv[i], state_str[s->state]);
-		}
+	s = vmmngr_find(argv[1]);
+	if (!s) {
+		printf("Can't find vm %s\n", argv[1]);
+		return ret;
 	}
-	return 0;
+
+	switch(s->state) {
+		case VM_STARTED:
+		case VM_SUSPENDED:
+			ret = stop_vm(argv[1]);
+			if (ret != 0) {
+				break;
+			}
+			if (wait_vm_stop(argv[1], STOP_TIMEOUT)) {
+				printf("Failed to stop %s in %u sec, reset failed\n",argv[1], STOP_TIMEOUT);
+				break;
+			}
+			ret = start_vm(argv[1]);
+			break;
+		default:
+			printf("%s current state: %s, can't reset\n",argv[1], state_str[s->state]);
+	}
+	return ret;
 }
 
 /* Default args validation function */

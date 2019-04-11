@@ -161,7 +161,7 @@ static void vuart_toggle_intr(const struct acrn_vuart *vu)
 	vioapic_set_irqline_lock(vu->vm, vuart_com_irq, operation);
 }
 
-static void vuart_write(struct acrn_vm *vm, uint16_t offset_arg,
+static bool vuart_write(struct acrn_vm *vm, uint16_t offset_arg,
 			__unused size_t width, uint32_t value)
 {
 	uint16_t offset = offset_arg;
@@ -244,14 +244,17 @@ static void vuart_write(struct acrn_vm *vm, uint16_t offset_arg,
 done:
 	vuart_toggle_intr(vu);
 	vuart_unlock(vu);
+
+	return true;
 }
 
-static uint32_t vuart_read(struct acrn_vm *vm, uint16_t offset_arg,
+static bool vuart_read(struct acrn_vm *vm, struct acrn_vcpu *vcpu, uint16_t offset_arg,
 			__unused size_t width)
 {
 	uint16_t offset = offset_arg;
 	uint8_t iir, reg, intr_reason;
 	struct acrn_vuart *vu = vm_vuart(vm);
+	struct pio_request *pio_req = &vcpu->req.reqs.pio;
 
 	offset -= vu->base;
 	vuart_lock(vu);
@@ -321,8 +324,10 @@ static uint32_t vuart_read(struct acrn_vm *vm, uint16_t offset_arg,
 	}
 done:
 	vuart_toggle_intr(vu);
+	pio_req->value = (uint32_t)reg;
 	vuart_unlock(vu);
-	return (uint32_t)reg;
+
+	return true;
 }
 
 static void vuart_register_io_handler(struct acrn_vm *vm)
@@ -385,7 +390,7 @@ struct acrn_vuart *vuart_console_active(void)
 	vm = get_sos_vm();
 #endif
 
-	if (vm != NULL) {
+	if (is_valid_vm(vm)) {
 		struct acrn_vuart *vu = vm_vuart(vm);
 
 		if (vu->active) {

@@ -39,6 +39,13 @@ include $(BASEDIR)/../scripts/deps.mk
 
 include scripts/kconfig/kconfig.mk
 
+#initialize scenarios name
+ifeq ($(CONFIG_SDC),y)
+SCENARIO_NAME := sdc
+else ifeq ($(CONFIG_LOGICAL_PARTITION),y)
+SCENARIO_NAME := logical_partition
+endif
+
 LD_IN_TOOL = scripts/genld.sh
 BASH = $(shell which bash)
 
@@ -110,6 +117,7 @@ INCLUDE_PATH += bsp/include
 INCLUDE_PATH += boot/include
 INCLUDE_PATH += $(HV_OBJDIR)/include
 INCLUDE_PATH += arch/x86/configs/$(CONFIG_BOARD)
+INCLUDE_PATH += scenarios/$(SCENARIO_NAME)
 
 CC ?= gcc
 AS ?= as
@@ -138,11 +146,8 @@ C_SRCS += arch/x86/seed/seed_sbl.c
 # configuration component
 C_SRCS += arch/x86/configs/vm_config.c
 C_SRCS += arch/x86/configs/$(CONFIG_BOARD)/ve820.c
-ifeq ($(CONFIG_PARTITION_MODE),y)
-C_SRCS += arch/x86/configs/$(CONFIG_BOARD)/pt_dev.c
-endif
-
 C_SRCS += arch/x86/configs/$(CONFIG_BOARD)/board.c
+C_SRCS += scenarios/$(SCENARIO_NAME)/pt_dev.c
 
 C_SRCS += boot/acpi.c
 C_SRCS += boot/dmar_parse.c

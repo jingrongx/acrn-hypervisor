@@ -121,9 +121,13 @@ static inline uint8_t get_slp_typx(uint32_t pm1_cnt)
 	return (uint8_t)((pm1_cnt & 0x1fffU) >> BIT_SLP_TYPx);
 }
 
-static uint32_t pm1ab_io_read(__unused struct acrn_vm *vm, uint16_t addr, size_t width)
+static bool pm1ab_io_read(__unused struct acrn_vm *vm, struct acrn_vcpu *vcpu, uint16_t addr, size_t width)
 {
-	return pio_read(addr, width);
+	struct pio_request *pio_req = &vcpu->req.reqs.pio;
+
+	pio_req->value = pio_read(addr, width);
+
+	return true;
 }
 
 static inline void enter_s3(struct acrn_vm *vm, uint32_t pm1a_cnt_val, uint32_t pm1b_cnt_val)
@@ -142,7 +146,7 @@ static inline void enter_s3(struct acrn_vm *vm, uint32_t pm1a_cnt_val, uint32_t 
 	resume_vm_from_s3(vm, guest_wakeup_vec32);	/* jump back to vm */
 }
 
-static void pm1ab_io_write(struct acrn_vm *vm, uint16_t addr, size_t width, uint32_t v)
+static bool pm1ab_io_write(struct acrn_vm *vm, uint16_t addr, size_t width, uint32_t v)
 {
 	static uint32_t pm1a_cnt_ready = 0U;
 	bool to_write = true;
@@ -179,6 +183,8 @@ static void pm1ab_io_write(struct acrn_vm *vm, uint16_t addr, size_t width, uint
 	if (to_write) {
 		pio_write(v, addr, width);
 	}
+
+	return true;
 }
 
 static void register_gas_io_handler(struct acrn_vm *vm, uint32_t pio_idx, const struct acpi_generic_address *gas)
@@ -206,4 +212,35 @@ void register_pm1ab_handler(struct acrn_vm *vm)
 	register_gas_io_handler(vm, PM1B_EVT_PIO_IDX, &(sx_data->pm1b_evt));
 	register_gas_io_handler(vm, PM1A_CNT_PIO_IDX, &(sx_data->pm1a_cnt));
 	register_gas_io_handler(vm, PM1B_CNT_PIO_IDX, &(sx_data->pm1b_cnt));
+}
+
+static bool rt_vm_pm1a_io_read(__unused struct acrn_vm *vm, __unused struct acrn_vcpu *vcpu,
+						 __unused uint16_t addr, __unused size_t width)
+{
+	return false;
+}
+
+static bool rt_vm_pm1a_io_write(struct acrn_vm *vm, uint16_t addr, size_t width, uint32_t v)
+{
+	if ((addr != RT_VM_PM1A_CNT_ADDR) || (width != 2U)) {
+		pr_dbg("Invalid address (0x%x) or width (0x%x)", addr, width);
+	} else {
+		if (((v & RT_VM_PM1A_SLP_EN) && (((v & RT_VM_PM1A_SLP_TYP) >> 10U) == 5U)) != 0U) {
+			vm->state = VM_POWERING_OFF;
+		}
+	}
+
+	return false;
+}
+
+void register_rt_vm_pm1a_ctl_handler(struct acrn_vm *vm)
+{
+	struct vm_io_range io_range;
+
+	io_range.flags = IO_ATTR_RW;
+	io_range.base = RT_VM_PM1A_CNT_ADDR;
+	io_range.len = 1U;
+
+	register_pio_emulation_handler(vm, RT_VM_PM1A_CNT_PIO_IDX, &io_range,
+					&rt_vm_pm1a_io_read, &rt_vm_pm1a_io_write);
 }

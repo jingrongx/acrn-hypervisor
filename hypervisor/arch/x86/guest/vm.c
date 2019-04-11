@@ -48,18 +48,24 @@ uint16_t find_free_vm_id(void)
 	return (vm_config->type == UNDEFINED_VM) ? id : INVALID_VM_ID;
 }
 
+/**
+ * @pre vm != NULL && vm->vmid < CONFIG_MAX_VM_NUM
+ */
 static inline void free_vm_id(const struct acrn_vm *vm)
 {
 	struct acrn_vm_config *vm_config = get_vm_config(vm->vm_id);
 
-	if (vm_config != NULL) {
-		vm_config->type = UNDEFINED_VM;
-	}
+	vm_config->type = UNDEFINED_VM;
+}
+
+bool is_valid_vm(const struct acrn_vm *vm)
+{
+	return (vm != NULL) && (vm->state != VM_STATE_INVALID);
 }
 
 bool is_sos_vm(const struct acrn_vm *vm)
 {
-	return (vm != NULL) && (vm == sos_vm_ptr);
+	return (vm != NULL)  && (get_vm_config(vm->vm_id)->type == SOS_VM);
 }
 
 /**
@@ -70,6 +76,16 @@ bool is_lapic_pt(const struct acrn_vm *vm)
 	struct acrn_vm_config *vm_config = get_vm_config(vm->vm_id);
 
 	return ((vm_config->guest_flags & GUEST_FLAG_LAPIC_PASSTHROUGH) != 0U);
+}
+
+/**
+ * @pre vm != NULL && vm_config != NULL && vm->vmid < CONFIG_MAX_VM_NUM
+ */
+bool is_rt_vm(const struct acrn_vm *vm)
+{
+	struct acrn_vm_config *vm_config = get_vm_config(vm->vm_id);
+
+	return ((vm_config->guest_flags & GUEST_FLAG_RT) != 0U);
 }
 
 /**
@@ -329,6 +345,12 @@ int32_t create_vm(uint16_t vm_id, struct acrn_vm_config *vm_config, struct acrn_
 	vm->arch_vm.nworld_eptp = vm->arch_vm.ept_mem_ops.get_pml4_page(vm->arch_vm.ept_mem_ops.info);
 	sanitize_pte((uint64_t *)vm->arch_vm.nworld_eptp);
 
+	/* Register default handlers for PIO & MMIO if it is SOS VM or Pre-launched VM */
+	if ((vm_config->type == SOS_VM) || (vm_config->type == PRE_LAUNCHED_VM)) {
+		register_pio_default_emulation_handler(vm);
+		register_mmio_default_emulation_handler(vm);
+	}
+
 	if (is_sos_vm(vm)) {
 		/* Only for SOS_VM */
 		create_sos_vm_e820(vm);
@@ -411,6 +433,11 @@ int32_t create_vm(uint16_t vm_id, struct acrn_vm_config *vm_config, struct acrn_
 		/* Init full emulated vIOAPIC instance */
 		vioapic_init(vm);
 
+		/* Intercept the virtual pm port for RTVM */
+		if (is_rt_vm(vm)) {
+			register_rt_vm_pm1a_ctl_handler(vm);
+		}
+
 		/* Populate return VM handle */
 		*rtn_vm = vm;
 		vm->sw.io_shared_page = NULL;
@@ -426,7 +453,7 @@ int32_t create_vm(uint16_t vm_id, struct acrn_vm_config *vm_config, struct acrn_
 		}
 	}
 
-	if (need_cleanup && (vm != NULL)) {
+	if (need_cleanup && is_valid_vm(vm)) {
 		if (vm->arch_vm.nworld_eptp != NULL) {
 			(void)memset(vm->arch_vm.nworld_eptp, 0U, PAGE_SIZE);
 		}
@@ -448,6 +475,8 @@ int32_t shutdown_vm(struct acrn_vm *vm)
 
 	/* Only allow shutdown paused vm */
 	if (vm->state == VM_PAUSED) {
+		vm->state = VM_STATE_INVALID;
+
 		foreach_vcpu(i, vm, vcpu) {
 			reset_vcpu(vcpu);
 			offline_vcpu(vcpu);
@@ -530,10 +559,21 @@ void pause_vm(struct acrn_vm *vm)
 	struct acrn_vcpu *vcpu = NULL;
 
 	if (vm->state != VM_PAUSED) {
-		vm->state = VM_PAUSED;
+		if (is_rt_vm(vm)) {
+			/* Only when RTVM is powering off by itself, we can pause vcpu */
+			if (vm->state == VM_POWERING_OFF) {
+				foreach_vcpu(i, vm, vcpu) {
+					pause_vcpu(vcpu, VCPU_ZOMBIE);
+				}
 
-		foreach_vcpu(i, vm, vcpu) {
-			pause_vcpu(vcpu, VCPU_ZOMBIE);
+				vm->state = VM_PAUSED;
+			}
+		} else {
+			foreach_vcpu(i, vm, vcpu) {
+				pause_vcpu(vcpu, VCPU_ZOMBIE);
+			}
+
+			vm->state = VM_PAUSED;
 		}
 	}
 }
