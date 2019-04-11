@@ -125,21 +125,22 @@ internal_scan(struct libusb_device ***list, int list_sz, int depth,
 }
 
 static int
-usb_dev_scan_dev()
+usb_dev_scan_dev(struct libusb_device ***devlist)
 {
 	int num_devs;
-	struct libusb_device **devlist;
 	int8_t visit[USB_MAX_DEVICES];
 
 	if (!g_ctx.libusb_ctx)
 		return -1;
 
-	num_devs = libusb_get_device_list(g_ctx.libusb_ctx, &devlist);
-	if (num_devs < 0)
+	num_devs = libusb_get_device_list(g_ctx.libusb_ctx, devlist);
+	if (num_devs < 0) {
+		*devlist = NULL;
 		return -1;
+	}
 
 	memset(visit, 0, sizeof(visit));
-	internal_scan(&devlist, num_devs, 1, visit, USB_MAX_DEVICES);
+	internal_scan(devlist, num_devs, 1, visit, USB_MAX_DEVICES);
 	return num_devs;
 }
 
@@ -189,6 +190,15 @@ usb_dev_comp_req(struct libusb_transfer *libusb_xfer)
 
 	/* async transfer */
 	xfer = req->xfer;
+	if (xfer->magic != USB_DROPPED_XFER_MAGIC)
+		/* FIXME: if magic is not what we expected, which means it is
+		 * reset by Disable Endpoint command, hence this xfer from
+		 * callback function should be discarded. This is a workaround
+		 * and a formal implementation for Disable Endpoint command
+		 * will replace this WA.
+		 */
+		goto out;
+
 	assert(xfer);
 	assert(xfer->dev);
 
@@ -745,7 +755,7 @@ usb_dev_data(void *pdata, struct usb_data_xfer *xfer, int dir, int epctx)
 	int rc = 0, epid;
 	uint8_t type;
 	int blk_start, data_size, blk_count;
-	int retries = 3, i, buf_idx;
+	int retries = 3, i, j, buf_idx;
 	struct usb_data_xfer_block *b;
 	static const char * const type_str[] = {"CTRL", "ISO", "BULK", "INT"};
 	static const char * const dir_str[] = {"OUT", "IN"};
@@ -800,11 +810,12 @@ usb_dev_data(void *pdata, struct usb_data_xfer *xfer, int dir, int epctx)
 			data_size, dir_str[dir], type_str[type]);
 
 	if (!dir) {
-		for (i = 0, buf_idx = 0; i < blk_count; i++) {
+		for (i = 0, j = 0, buf_idx = 0; j < blk_count; ++i) {
 			b = &xfer->data[(blk_start + i) % USB_MAX_XFER_BLOCKS];
 			if (b->buf) {
 				memcpy(&req->buffer[buf_idx], b->buf, b->blen);
 				buf_idx += b->blen;
+				j++;
 			}
 		}
 	}
@@ -1215,7 +1226,7 @@ usb_dev_sys_init(usb_dev_sys_cb conn_cb, usb_dev_sys_cb disconn_cb,
 	g_ctx.notify_cb    = notify_cb;
 	g_ctx.intr_cb      = intr_cb;
 
-	num_devs = usb_dev_scan_dev();
+	num_devs = usb_dev_scan_dev(&g_ctx.devlist);
 	UPRINTF(LINF, "found %d devices before Guest OS booted\r\n", num_devs);
 
 	native_conn_evt    = LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED;
@@ -1260,10 +1271,15 @@ usb_dev_sys_init(usb_dev_sys_cb conn_cb, usb_dev_sys_cb disconn_cb,
 	return 0;
 
 errout:
-	if (g_ctx.libusb_ctx)
-		libusb_exit(g_ctx.libusb_ctx);
+	if (g_ctx.devlist) {
+		libusb_free_device_list(g_ctx.devlist, 1);
+		g_ctx.devlist = NULL;
+	}
 
-	g_ctx.libusb_ctx = NULL;
+	if (g_ctx.libusb_ctx) {
+		libusb_exit(g_ctx.libusb_ctx);
+		g_ctx.libusb_ctx = NULL;
+	}
 	return -1;
 }
 
@@ -1280,6 +1296,11 @@ usb_dev_sys_deinit(void)
 
 	g_ctx.thread_exit = 1;
 	pthread_join(g_ctx.thread, NULL);
+
+	if (g_ctx.devlist) {
+		libusb_free_device_list(g_ctx.devlist, 1);
+		g_ctx.devlist = NULL;
+	}
 
 	libusb_exit(g_ctx.libusb_ctx);
 	g_ctx.libusb_ctx = NULL;
