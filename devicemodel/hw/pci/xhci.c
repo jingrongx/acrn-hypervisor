@@ -892,7 +892,7 @@ pci_xhci_native_usb_dev_disconn_cb(void *hci_data, void *dev_data)
 	}
 
 	edev = xdev->devices[vport];
-	for (slot = 1; slot < XHCI_MAX_SLOTS; ++slot)
+	for (slot = 1; slot <= XHCI_MAX_SLOTS; ++slot)
 		if (xdev->slots[slot] == edev)
 			break;
 
@@ -1056,6 +1056,8 @@ pci_xhci_dev_destroy(struct pci_xhci_dev_emu *de)
 {
 	struct usb_devemu *ue;
 	struct usb_dev *ud;
+	struct pci_xhci_dev_ep *vdep;
+	int i;
 
 	if (de) {
 		ue = de->dev_ue;
@@ -1071,6 +1073,18 @@ pci_xhci_dev_destroy(struct pci_xhci_dev_emu *de)
 
 		if (ue->ue_devtype == USB_DEV_PORT_MAPPER)
 			free(ue);
+
+		for (i = 1; i < XHCI_MAX_ENDPOINTS; i++) {
+			vdep = &de->eps[i];
+			if (vdep->ep_xfer) {
+				if (vdep->ep_xfer->ureq) {
+					free(vdep->ep_xfer->ureq);
+					vdep->ep_xfer->ureq = NULL;
+				}
+				free(vdep->ep_xfer);
+				vdep->ep_xfer = NULL;
+			}
+		}
 
 		free(de);
 	}
@@ -1592,6 +1606,7 @@ pci_xhci_init_ep(struct pci_xhci_dev_emu *dev, int epid)
 			USB_DATA_XFER_INIT(devep->ep_xfer);
 			devep->ep_xfer->dev = (void *)dev;
 			devep->ep_xfer->epid = epid;
+			devep->ep_xfer->magic = USB_DROPPED_XFER_MAGIC;
 		} else
 			return -1;
 	}
@@ -1617,6 +1632,7 @@ pci_xhci_disable_ep(struct pci_xhci_dev_emu *dev, int epid)
 		free(devep->ep_sctx_trbs);
 
 	if (devep->ep_xfer != NULL) {
+		memset(devep->ep_xfer, 0, sizeof(*devep->ep_xfer));
 		free(devep->ep_xfer);
 		devep->ep_xfer = NULL;
 	}
@@ -1854,7 +1870,6 @@ pci_xhci_cmd_reset_device(struct pci_xhci_vdev *xdev, uint32_t slot)
 	else {
 		dev->dev_slotstate = XHCI_ST_DEFAULT;
 
-		dev->hci.hci_address = 0;
 		dev_ctx = pci_xhci_get_dev_ctx(xdev, slot);
 		if (!dev_ctx) {
 			cmderr = XHCI_TRB_ERROR_SLOT_NOT_ON;
@@ -3962,7 +3977,7 @@ pci_xhci_parse_opts(struct pci_xhci_vdev *xdev, char *opts)
 
 	/* allocate neccessary resources during parsing*/
 	xdev->devices = calloc(XHCI_MAX_DEVS + 1, sizeof(*xdev->devices));
-	xdev->slots = calloc(XHCI_MAX_SLOTS, sizeof(*xdev->slots));
+	xdev->slots = calloc(XHCI_MAX_SLOTS + 1, sizeof(*xdev->slots));
 	xdev->portregs = calloc(XHCI_MAX_DEVS + 1, sizeof(*xdev->portregs));
 	if (!xdev->devices || !xdev->slots || !xdev->portregs) {
 		rc = -2;

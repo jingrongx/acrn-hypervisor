@@ -295,9 +295,10 @@ virtio_net_tx_stop(struct virtio_net *net)
 {
 	void *jval;
 
+	pthread_mutex_lock(&net->tx_mtx);
 	net->closing = 1;
-
 	pthread_cond_broadcast(&net->tx_cond);
+	pthread_mutex_unlock(&net->tx_mtx);
 
 	pthread_join(net->tx_tid, &jval);
 }
@@ -535,18 +536,20 @@ static void *
 virtio_net_tx_thread(void *param)
 {
 	struct virtio_net *net = param;
-	struct virtio_vq_info *vq;
+	struct virtio_vq_info *vq = &net->queues[VIRTIO_NET_TXQ];
 	int error;
-
-	vq = &net->queues[VIRTIO_NET_TXQ];
 
 	/*
 	 * Let us wait till the tx queue pointers get initialised &
 	 * first tx signaled
 	 */
 	pthread_mutex_lock(&net->tx_mtx);
-	error = pthread_cond_wait(&net->tx_cond, &net->tx_mtx);
-	assert(error == 0);
+
+	while (!net->closing && !vq_ring_ready(vq)) {
+		error = pthread_cond_wait(&net->tx_cond, &net->tx_mtx);
+		assert(error == 0);
+	}
+
 	if (net->closing) {
 		WPRINTF(("vtnet tx thread closing...\n"));
 		pthread_mutex_unlock(&net->tx_mtx);
@@ -555,6 +558,13 @@ virtio_net_tx_thread(void *param)
 
 	for (;;) {
 		/* note - tx mutex is locked here */
+		net->tx_in_progress = 0;
+
+		/*
+		 * Checking the avail ring here serves two purposes:
+		 *  - avoid vring processing due to spurious wakeups
+		 *  - catch missing notifications before acquiring tx_mtx
+		 */
 		while (net->resetting || !vq_has_descs(vq)) {
 			vq_clear_used_ring_flags(&net->base, vq);
 			/* memory barrier */
@@ -562,7 +572,6 @@ virtio_net_tx_thread(void *param)
 			if (!net->resetting && vq_has_descs(vq))
 				break;
 
-			net->tx_in_progress = 0;
 			error = pthread_cond_wait(&net->tx_cond, &net->tx_mtx);
 			assert(error == 0);
 			if (net->closing) {
@@ -571,6 +580,7 @@ virtio_net_tx_thread(void *param)
 				return NULL;
 			}
 		}
+
 		vq->used->flags |= VRING_USED_F_NO_NOTIFY;
 		net->tx_in_progress = 1;
 		pthread_mutex_unlock(&net->tx_mtx);
@@ -664,7 +674,7 @@ virtio_net_tap_setup(struct virtio_net *net, char *devname)
 	int vhost_fd = -1;
 	int rc;
 
-	rc = snprintf(tbuf, IFNAMSIZ, "acrn_%s", devname);
+	rc = snprintf(tbuf, IFNAMSIZ, "%s", devname);
 	if (rc < 0 || rc >= IFNAMSIZ) /* give warning if error or truncation happens */
 		WPRINTF(("Fail to set tap device name %s\n", tbuf));
 
